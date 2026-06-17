@@ -1,0 +1,45 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Dataset downloads (grandes, no van al repo)
+data/
+
+# Outputs del pipeline (features h5, matches h5, modelos COLMAP)
+outputs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# Windows
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Logs
+*.log
+*.LOG.*
+colmap.LOG.*
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Misc
+.DS_Store
+*.tmp
+*.bak
