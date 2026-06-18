@@ -8,13 +8,14 @@ from .dataset_panel import DatasetPanel
 from .pipeline_panel import PipelinePanel
 from .progress_panel import ProgressPanel
 from .viewer_panel import ViewerPanel
+from .localization_panel import LocalizationPanel
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("TP COLMAP — Visual Localization")
-        self.setMinimumSize(1100, 680)
+        self.setMinimumSize(1200, 700)
         self._runner = None
         self._build_ui()
         self._apply_theme()
@@ -31,36 +32,43 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(8)
 
-        # ── Left panel: tabs for dataset / pipeline config ─────────────
-        self._tabs = QTabWidget()
-        self._tabs.setMaximumWidth(360)
-        self._tabs.setMinimumWidth(300)
+        # ── Left panel: dataset / pipeline config ──────────────────────
+        self._left_tabs = QTabWidget()
+        self._left_tabs.setMaximumWidth(360)
+        self._left_tabs.setMinimumWidth(300)
 
         self.dataset_panel  = DatasetPanel()
         self.pipeline_panel = PipelinePanel()
-        self._tabs.addTab(self.dataset_panel,  "📁  Dataset")
-        self._tabs.addTab(self.pipeline_panel, "⚙️  Pipeline")
+        self._left_tabs.addTab(self.dataset_panel,  "📁  Dataset")
+        self._left_tabs.addTab(self.pipeline_panel, "⚙️  Pipeline")
 
-        # ── Right panel: progress (top) + 3D viewer (bottom) ───────────
+        # ── Right panel: progress (top) + viewer tabs (bottom) ─────────
         right_splitter = QSplitter(Qt.Orientation.Vertical)
 
         self.progress_panel = ProgressPanel()
-        self.viewer_panel   = ViewerPanel()
+
+        # Viewer tabs: reconstruction 3D | localization
+        self._view_tabs = QTabWidget()
+        self._view_tabs.setTabPosition(QTabWidget.TabPosition.North)
+
+        self.viewer_panel = ViewerPanel()
+        self.loc_panel    = LocalizationPanel()
+
+        self._view_tabs.addTab(self.viewer_panel, "🗺  Reconstrucción 3D")
+        self._view_tabs.addTab(self.loc_panel,    "📍  Localización")
 
         right_splitter.addWidget(self.progress_panel)
-        right_splitter.addWidget(self.viewer_panel)
-        right_splitter.setSizes([220, 460])
+        right_splitter.addWidget(self._view_tabs)
+        right_splitter.setSizes([220, 480])
         right_splitter.setCollapsible(0, False)
         right_splitter.setCollapsible(1, False)
 
-        root.addWidget(self._tabs)
+        root.addWidget(self._left_tabs)
         root.addWidget(right_splitter, 1)
 
-        # Status bar
         self.setStatusBar(QStatusBar())
         self.statusBar().showMessage("Listo  —  Seleccioná un dataset y presioná Ejecutar.")
 
-        # Connect signals
         self.pipeline_panel.run_requested.connect(self._on_run)
 
     def _apply_theme(self) -> None:
@@ -78,6 +86,8 @@ class MainWindow(QMainWindow):
             QLabel { color: #ccc; }
             QStatusBar { color: #888; font-size: 10px; }
             QSplitter::handle { background: #444; }
+            QPushButton { background: #3c3c3c; border: 1px solid #555; border-radius: 3px; padding: 4px 8px; color: #ddd; }
+            QPushButton:hover { background: #4a4a4a; }
         """)
 
     # ------------------------------------------------------------------
@@ -92,7 +102,6 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Dataset", "Seleccioná un dataset o ruta de imágenes primero.")
             return
 
-        # Stop any previous run
         if self._runner and self._runner.isRunning():
             self._runner.terminate()
             self._runner.wait()
@@ -105,15 +114,23 @@ class MainWindow(QMainWindow):
         self._runner.log_message.connect(self.progress_panel.append_log)
         self._runner.progress_updated.connect(self.progress_panel.set_progress)
         self._runner.stage_changed.connect(self.progress_panel.set_stage)
-        self._runner.reconstruction_ready.connect(self.viewer_panel.load_model)
+        self._runner.reconstruction_ready.connect(self._on_reconstruction_ready)
+        self._runner.localization_ready.connect(self._on_localization_ready)
         self._runner.finished.connect(self._on_finished)
         self._runner.start()
+
+    def _on_reconstruction_ready(self, sfm_dir: str) -> None:
+        self.viewer_panel.load_model(sfm_dir)
+        self._view_tabs.setCurrentIndex(0)
+
+    def _on_localization_ready(self, sfm_dir: str, images_dir: str, results_path: str) -> None:
+        self.loc_panel.load_localization(sfm_dir, images_dir, results_path)
+        self._view_tabs.setCurrentIndex(1)
 
     def _on_finished(self, success: bool) -> None:
         self.pipeline_panel.set_running(False)
         if success:
             self.statusBar().showMessage("Pipeline completado con éxito.")
-            self._tabs.setCurrentIndex(1)  # Switch to pipeline tab to see results
         else:
             self.statusBar().showMessage("Pipeline falló — revisá los logs.")
 

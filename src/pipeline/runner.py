@@ -32,6 +32,7 @@ class PipelineRunner(QThread):
     progress_updated     = Signal(int)
     stage_changed        = Signal(str)
     reconstruction_ready = Signal(str)
+    localization_ready   = Signal(str, str, str)   # sfm_dir, images_dir, results_path
     finished             = Signal(bool)
 
     def __init__(self, dataset: Dataset, config: dict):
@@ -120,7 +121,8 @@ class PipelineRunner(QThread):
                 export_dir=out_dir, image_list=db_images, overwrite=False,
             )
             pairs_from_retrieval.main(
-                retrieval_path, sfm_pairs, num_matched=20, db_list=db_images,
+                retrieval_path, sfm_pairs, num_matched=20,
+                query_list=db_images, db_list=db_images,
             )
         self.progress_updated.emit(38)
 
@@ -188,6 +190,9 @@ class PipelineRunner(QThread):
                 covisibility_clustering=False,
             )
             self._log(f"Resultados en: {results_path}")
+            self.localization_ready.emit(
+                str(sfm_dir), str(images_dir), str(results_path)
+            )
             self.progress_updated.emit(96)
             self._report_metrics(results_path)
 
