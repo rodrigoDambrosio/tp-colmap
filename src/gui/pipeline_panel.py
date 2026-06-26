@@ -33,7 +33,8 @@ _RETRIEVAL_DESC = {
 
 
 class PipelinePanel(QWidget):
-    run_requested = Signal(dict)
+    run_requested   = Signal(dict)
+    clear_requested = Signal()
 
     def __init__(self):
         super().__init__()
@@ -94,6 +95,16 @@ class PipelinePanel(QWidget):
         self._run_btn.clicked.connect(self._emit_run)
         layout.addWidget(self._run_btn)
 
+        # Clear button
+        self._clear_btn = QPushButton("🗑   Limpiar ejecución anterior")
+        self._clear_btn.setStyleSheet(
+            "QPushButton { font-size: 11px; padding: 5px; background: #3c1f1f; color: #e08080; border: 1px solid #6b3030; border-radius: 4px; }"
+            "QPushButton:hover { background: #5a2a2a; color: #ffaaaa; }"
+            "QPushButton:disabled { background: #333; color: #666; border-color: #444; }"
+        )
+        self._clear_btn.clicked.connect(self.clear_requested)
+        layout.addWidget(self._clear_btn)
+
     def _emit_run(self) -> None:
         idx = self._combo_box.currentIndex()
         _, extractor, matcher = FEATURE_COMBOS[idx]
@@ -107,4 +118,5 @@ class PipelinePanel(QWidget):
 
     def set_running(self, running: bool) -> None:
         self._run_btn.setEnabled(not running)
+        self._clear_btn.setEnabled(not running)
         self._run_btn.setText("⏳   Ejecutando..." if running else "▶   Ejecutar pipeline")
