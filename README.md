@@ -47,3 +47,13 @@ Extracción de features (DB)
 - **pycolmap** — reconstrucción SfM y estimación de pose
 - **LightGlue** — feature matching
 - **PySide6** — interfaz gráfica
+
+## Referencias
+
+- **hloc** — Sarlin et al., *From Coarse to Fine: Robust Hierarchical Localization at Large Scale*, CVPR 2019. [github.com/cvg/Hierarchical-Localization](https://github.com/cvg/Hierarchical-Localization)
+
+- **LightGlue** — Lindenberger et al., *LightGlue: Local Feature Matching at Light Speed*, ICCV 2023. [github.com/cvg/LightGlue](https://github.com/cvg/LightGlue)
+
+- **DISK** — Tyszkiewicz et al., *DISK: Learning local features with policy gradient*, NeurIPS 2020.
+
+- **COLMAP** — Schönberger & Frahm, *Structure-from-Motion Revisited*, CVPR 2016. [github.com/colmap/colmap](https://github.com/colmap/colmap)
