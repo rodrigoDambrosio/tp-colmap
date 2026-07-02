@@ -10,7 +10,7 @@ pip install git+https://github.com/cvg/Hierarchical-Localization.git
 pip install git+https://github.com/cvg/LightGlue.git
 ```
 
-> Requiere CUDA y ~8 GB de VRAM para los extractores con GPU.
+> Requiere CUDA y GPU
 
 ## Uso
 
