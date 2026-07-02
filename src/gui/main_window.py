@@ -57,11 +57,14 @@ class MainWindow(QMainWindow):
         stack_layout.addWidget(self.pipeline_panel)
         stack_layout.addStretch()
 
+        stack.setMinimumWidth(320)
+
         scroll = QScrollArea()
         scroll.setWidget(stack)
         scroll.setWidgetResizable(True)
-        scroll.setFixedWidth(340)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFixedWidth(360)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll.setStyleSheet("QScrollArea { border: none; }")
 
         left_layout.addWidget(scroll)
@@ -87,6 +90,7 @@ class MainWindow(QMainWindow):
         self.pipeline_panel.run_requested.connect(self._on_run)
         self.pipeline_panel.clear_requested.connect(self._on_clear)
         self.dataset_panel.load_previous_requested.connect(self._on_load)
+        self.dataset_panel.browse_runs_requested.connect(self._on_browse_runs)
 
     def _apply_theme(self) -> None:
         self.setStyleSheet("""
@@ -175,6 +179,20 @@ class MainWindow(QMainWindow):
 
         self.loc_panel.load_localization(str(sfm_dir), str(images_dir), str(results_path))
         self.statusBar().showMessage(f"Ejecución anterior cargada: {dataset.name}")
+
+    def _on_browse_runs(self) -> None:
+        from src.gui.past_runs_dialog import PastRunsDialog
+        from PySide6.QtWidgets import QDialog
+        dlg = PastRunsDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted or not dlg.result_sfm_dir:
+            return
+        self.loc_panel.load_localization(
+            dlg.result_sfm_dir,
+            dlg.result_images_dir,
+            dlg.result_results,
+        )
+        run_name = Path(dlg.result_sfm_dir).parent.name
+        self.statusBar().showMessage(f"Run cargado: {run_name}")
 
     def _on_clear(self) -> None:
         dataset = self.dataset_panel.get_selected_dataset()

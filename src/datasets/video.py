@@ -11,17 +11,164 @@ from .base import Dataset
 IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
 
 
+def ffprobe_available() -> bool:
+    """Return True if ffprobe is on PATH."""
+    import subprocess
+    try:
+        subprocess.run(
+            ["ffprobe", "-version"],
+            capture_output=True, timeout=5,
+        )
+        return True
+    except FileNotFoundError:
+        return False
+    except Exception:
+        return False
+
+
+def read_calibration_from_video(
+    video_path: Path,
+    log_fn: Optional[callable] = None,
+) -> Optional[dict]:
+    """
+    Try to extract focal length from video container metadata via ffprobe.
+    Returns a calibration dict (SIMPLE_RADIAL model) or None if not found.
+
+    Conversion: f_px = f_35mm_equiv * frame_width / 36.0
+    (36 mm is the horizontal width of a 35 mm full-frame sensor)
+    """
+    import subprocess, json
+
+    def _log(msg: str) -> None:
+        if log_fn:
+            log_fn(msg)
+
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "quiet",
+                "-print_format", "json",
+                "-show_streams", "-show_format",
+                str(video_path),
+            ],
+            capture_output=True, text=True, timeout=15,
+        )
+    except FileNotFoundError:
+        _log("ffprobe no encontrado en PATH")
+        return None
+    except Exception as e:
+        _log(f"Error al correr ffprobe: {e}")
+        return None
+
+    if result.returncode != 0:
+        _log(f"ffprobe retornó código {result.returncode}")
+        if result.stderr:
+            _log(f"stderr: {result.stderr.strip()}")
+        return None
+
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError as e:
+        _log(f"JSON inválido de ffprobe: {e}")
+        return None
+
+    # Collect all tags and the video stream dimensions
+    w = h = 0
+    tags: dict = {}
+    tags.update(data.get("format", {}).get("tags", {}))
+    for stream in data.get("streams", []):
+        if stream.get("codec_type") == "video":
+            w = stream.get("width", w)
+            h = stream.get("height", h)
+            tags.update(stream.get("tags", {}))
+
+    if not w or not h:
+        _log(f"No se pudo obtener dimensiones del video")
+        return None
+
+    _log(f"Dimensiones: {w}×{h}")
+
+    # Normalize keys to lowercase for case-insensitive lookup
+    tl = {k.lower(): v for k, v in tags.items()}
+
+    if tl:
+        _log(f"Tags encontradas ({len(tl)}):")
+        for k, v in sorted(tl.items()):
+            _log(f"  {k} = {v}")
+    else:
+        _log("No se encontraron tags de metadatos")
+
+    def _float(key: str) -> Optional[float]:
+        val = tl.get(key)
+        if val is None:
+            return None
+        try:
+            return float(str(val).split()[0])
+        except (ValueError, IndexError):
+            return None
+
+    # Priority 1: 35 mm equivalent focal length (most cameras write this)
+    f35 = (
+        _float("focal_length_in_35mm_format")
+        or _float("focal_length_35mm")
+        or _float("com.apple.quicktime.camera.focal_length35mm")
+    )
+    if f35:
+        f_px = f35 * w / 36.0
+        _log(f"Focal length (35mm equiv): {f35:.1f} mm → {f_px:.1f} px")
+        return {
+            "model":  "SIMPLE_RADIAL",
+            "width":  w,
+            "height": h,
+            "params": [f_px, w / 2.0, h / 2.0, 0.0],
+            "source": f"video metadata (f35={f35:.1f} mm)",
+        }
+
+    # Priority 2: real focal length in mm + sensor crop factor heuristic.
+    fl_mm = (
+        _float("focal_length")
+        or _float("com.apple.quicktime.camera.focal_length")
+    )
+    f35_apple = _float("com.apple.quicktime.camera.focal_length35mm_equiv")
+    if f35_apple:
+        f_px = f35_apple * w / 36.0
+        _log(f"Focal length (Apple 35mm equiv): {f35_apple:.1f} mm → {f_px:.1f} px")
+        return {
+            "model":  "SIMPLE_RADIAL",
+            "width":  w,
+            "height": h,
+            "params": [f_px, w / 2.0, h / 2.0, 0.0],
+            "source": f"video metadata (Apple f35={f35_apple:.1f} mm)",
+        }
+    if fl_mm:
+        # Rough heuristic: assume typical smartphone sensor ~5.1 mm wide
+        SENSOR_W_MM = 5.1
+        f_px = fl_mm * w / SENSOR_W_MM
+        _log(f"Focal length (real): {fl_mm:.2f} mm, heurística sensor {SENSOR_W_MM} mm → {f_px:.1f} px")
+        return {
+            "model":  "SIMPLE_RADIAL",
+            "width":  w,
+            "height": h,
+            "params": [f_px, w / 2.0, h / 2.0, 0.0],
+            "source": f"video metadata (fl={fl_mm:.2f} mm, heuristic sensor)",
+        }
+
+    _log("No se encontró focal length en ninguna tag conocida")
+    return None
+
+
 class VideoDataset(Dataset):
     """Dataset generado desde un archivo de video."""
 
-    def __init__(self, video_path: Path, fps: float = 2.0):
+    def __init__(self, video_path: Path, fps: float = 2.0, run_name: str = ""):
         self._video      = Path(video_path)
         self._fps        = max(0.1, fps)
+        self._run_name   = run_name.strip()
         self._frames_dir = self._video.parent / f"{self._video.stem}_frames"
 
     @property
     def name(self) -> str:
-        return f"video_{self._video.stem}"
+        return self._run_name or f"video_{self._video.stem}"
 
     # ------------------------------------------------------------------
     # Download / extraction

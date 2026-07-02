@@ -15,9 +15,6 @@ DATASET_OPTIONS = [
     ("Cambridge — KingsCollege",  "cambridge",    "KingsCollege"),
     ("Cambridge — ShopFacade",    "cambridge",    "ShopFacade"),
     ("Cambridge — OldHospital",   "cambridge",    "OldHospital"),
-    ("7-Scenes — Chess",          "seven_scenes", "chess"),
-    ("7-Scenes — Fire",           "seven_scenes", "fire"),
-    ("7-Scenes — Office",         "seven_scenes", "office"),
     ("COLMAP — South Building",   "colmap_dem",   "south-building"),
     ("COLMAP — Gerrard Hall",     "colmap_dem",   "gerrard-hall"),
     ("COLMAP — Person Hall",      "colmap_dem",   "person-hall"),
@@ -25,42 +22,39 @@ DATASET_OPTIONS = [
     ("Dataset propio",            "custom",       None),
 ]
 
-DESCRIPTIONS = {
-    "cambridge":    "Localización outdoor. Auto-descarga ~250 MB. Tiene ground truth.",
-    "seven_scenes": "Localización indoor RGB-D. Auto-descarga ~0.3-3 GB. Sin GT.",
-    "colmap_dem":   "Datasets demo de COLMAP. Auto-descarga. South Building ~150 MB, Graham Hall ~1.5 GB.",
-    "custom":       "Tus propias fotos o video. Split 80% DB / 20% query automático.",
-}
+DESCRIPTIONS: dict = {}
 
 _RB_STYLE = """
 QRadioButton {
-    color: #aaa;
-    spacing: 6px;
+    color: #999;
+    spacing: 8px;
     padding: 2px 0;
 }
 QRadioButton:checked {
     color: #ffffff;
-    font-weight: bold;
+    font-weight: 600;
 }
 QRadioButton::indicator {
-    width: 13px;
-    height: 13px;
+    width: 14px;
+    height: 14px;
     border-radius: 7px;
-    border: 2px solid #555;
-    background: #2a2a2a;
+    border: 2px solid #6a6a6a;
+    background: #333333;
 }
 QRadioButton::indicator:checked {
+    border: 3px solid #0078d4;
     background: #0078d4;
-    border-color: #0078d4;
 }
 QRadioButton::indicator:hover {
-    border-color: #888;
+    border-color: #aaa;
+    background: #3c3c3c;
 }
 """
 
 
 class DatasetPanel(QWidget):
     load_previous_requested = Signal()
+    browse_runs_requested   = Signal()  # MainWindow opens the dialog
 
     def __init__(self):
         super().__init__()
@@ -95,22 +89,38 @@ class DatasetPanel(QWidget):
             if module == "custom":
                 # Folder / video picker row
                 self._custom_row = QWidget()
-                row = QHBoxLayout(self._custom_row)
-                row.setContentsMargins(20, 0, 0, 0)
+                crow = QVBoxLayout(self._custom_row)
+                crow.setContentsMargins(0, 2, 0, 2)
+                crow.setSpacing(4)
+
                 self._path_edit = QLineEdit()
-                self._path_edit.setPlaceholderText("Carpeta de imágenes o archivo de video...")
+                self._path_edit.setPlaceholderText("Carpeta o video seleccionado...")
                 self._path_edit.setReadOnly(True)
-                btn_folder = QPushButton("📁")
-                btn_folder.setFixedWidth(32)
-                btn_folder.setToolTip("Seleccionar carpeta de imágenes")
+                crow.addWidget(self._path_edit)
+
+                btn_row = QHBoxLayout()
+                btn_row.setSpacing(6)
+                btn_folder = QPushButton("📁  Carpeta de imágenes")
+                btn_video  = QPushButton("📹  Archivo de video")
                 btn_folder.clicked.connect(self._browse_folder)
-                btn_video = QPushButton("📹")
-                btn_video.setFixedWidth(32)
-                btn_video.setToolTip("Seleccionar archivo de video")
                 btn_video.clicked.connect(self._browse_video)
-                row.addWidget(self._path_edit)
-                row.addWidget(btn_folder)
-                row.addWidget(btn_video)
+                btn_row.addWidget(btn_folder)
+                btn_row.addWidget(btn_video)
+                crow.addLayout(btn_row)
+
+                # Run name field
+                name_row = QHBoxLayout()
+                name_row.setSpacing(4)
+                name_row.addWidget(QLabel("Nombre:"))
+                self._name_edit = QLineEdit()
+                self._name_edit.setPlaceholderText("nombre_del_run (auto)")
+                self._name_edit.setToolTip(
+                    "Nombre de la carpeta en outputs/. Podés reusar el mismo nombre "
+                    "para continuar una ejecución anterior."
+                )
+                name_row.addWidget(self._name_edit, 1)
+                crow.addLayout(name_row)
+
                 group_layout.addWidget(self._custom_row)
                 self._custom_row.setEnabled(False)
 
@@ -139,6 +149,15 @@ class DatasetPanel(QWidget):
         self._run_status.setStyleSheet("color: #555; font-size: 10px; padding: 0 2px;")
         group_layout.addWidget(self._run_status)
 
+        self._browse_runs_btn = QPushButton("🗂  Explorar runs anteriores")
+        self._browse_runs_btn.setStyleSheet(
+            "QPushButton { font-size: 10px; padding: 3px 6px; color: #aaa; "
+            "background: #2a2a2a; border: 1px solid #444; border-radius: 3px; }"
+            "QPushButton:hover { color: #fff; background: #353535; }"
+        )
+        self._browse_runs_btn.clicked.connect(self._open_past_runs)
+        group_layout.addWidget(self._browse_runs_btn)
+
         self._load_prev_btn = QPushButton("📂  Cargar ejecución anterior")
         self._load_prev_btn.setStyleSheet(
             "QPushButton { font-size: 11px; padding: 4px 8px; background: #1f3020; "
@@ -151,19 +170,12 @@ class DatasetPanel(QWidget):
 
         layout.addWidget(group)
 
-        # Description
-        self._desc_label = QLabel()
-        self._desc_label.setWordWrap(True)
-        self._desc_label.setStyleSheet("color: #666; font-size: 10px; padding: 2px 4px;")
-        layout.addWidget(self._desc_label)
-
         # Calibration widget — only for custom dataset
         self._cal_widget = CalibrationWidget()
         self._cal_widget.setVisible(False)
         layout.addWidget(self._cal_widget)
 
         self._btn_group.buttonToggled.connect(self._on_toggle)
-        self._update_description()
         self._check_previous_run()
 
     # ------------------------------------------------------------------
@@ -177,16 +189,11 @@ class DatasetPanel(QWidget):
         _, module, _ = DATASET_OPTIONS[idx]
         is_custom = module == "custom"
         self._custom_row.setEnabled(is_custom)
-        self._cal_widget.setVisible(is_custom and not self._is_video)
-        self._update_description()
+        # Cal widget only shows once a folder is actually selected
+        self._cal_widget.setVisible(
+            is_custom and not self._is_video and self._custom_path is not None
+        )
         self._check_previous_run()
-
-    def _update_description(self) -> None:
-        idx = self._btn_group.checkedId()
-        if idx < 0:
-            return
-        _, module, _ = DATASET_OPTIONS[idx]
-        self._desc_label.setText(DESCRIPTIONS.get(module, ""))
 
     def _browse_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Seleccionar carpeta de imágenes")
@@ -195,6 +202,8 @@ class DatasetPanel(QWidget):
             self._is_video    = False
             self._path_edit.setText(path)
             self._fps_row.setVisible(False)
+            if not self._name_edit.text().strip():
+                self._name_edit.setText(f"custom_{self._custom_path.name}")
             self._cal_widget.setVisible(True)
             self._cal_widget.set_image_folder(self._custom_path)
             self._check_previous_run()
@@ -203,13 +212,18 @@ class DatasetPanel(QWidget):
         path, _ = QFileDialog.getOpenFileName(
             self, "Seleccionar archivo de video", "", VIDEO_EXTS
         )
-        if path:
-            self._custom_path = Path(path)
-            self._is_video    = True
-            self._path_edit.setText(path)
-            self._fps_row.setVisible(True)
-            self._cal_widget.setVisible(False)
-            self._check_previous_run()
+        if not path:
+            return
+        self._custom_path = Path(path)
+        self._is_video    = True
+        self._path_edit.setText(path)
+        self._fps_row.setVisible(True)
+        if not self._name_edit.text().strip():
+            self._name_edit.setText(f"video_{self._custom_path.stem}")
+        self._cal_widget.set_video_source(self._custom_path)
+        self._cal_widget._detect(silent=True)
+        self._cal_widget.setVisible(True)
+        self._check_previous_run()
 
     # ------------------------------------------------------------------
     # Previous run detection
@@ -246,6 +260,9 @@ class DatasetPanel(QWidget):
         """Call after a pipeline run finishes to update the status badge."""
         self._check_previous_run()
 
+    def _open_past_runs(self) -> None:
+        self.browse_runs_requested.emit()
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -259,20 +276,18 @@ class DatasetPanel(QWidget):
         if module == "cambridge":
             from src.datasets.cambridge import CambridgeDataset
             return CambridgeDataset(scene)
-        if module == "seven_scenes":
-            from src.datasets.seven_scenes import SevenScenesDataset
-            return SevenScenesDataset(scene)
         if module == "colmap_dem":
             from src.datasets.colmap_dem import ColmapDemDataset
             return ColmapDemDataset(scene)
         if module == "custom":
             if not self._custom_path:
                 return None
+            run_name = self._name_edit.text().strip()
             if self._is_video:
                 from src.datasets.video import VideoDataset
-                return VideoDataset(self._custom_path, fps=self._fps_spin.value())
+                return VideoDataset(self._custom_path, fps=self._fps_spin.value(), run_name=run_name)
             from src.datasets.custom import CustomDataset
-            return CustomDataset(self._custom_path)
+            return CustomDataset(self._custom_path, run_name=run_name)
         return None
 
     def get_calibration(self) -> Optional[dict]:

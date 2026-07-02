@@ -21,7 +21,7 @@ OUTPUT_DIR = Path("outputs")
 # Retrieval method name (UI) -> hloc extract_features conf key
 RETRIEVAL_CONFS = {
     "netvlad":               "netvlad",
-    "dir":                   "dir",
+    "megaloc":               "megaloc",
     "openibl":               "openibl",
     "exhaustive (dataset pequeño)": None,   # None = skip retrieval step
 }
@@ -89,6 +89,9 @@ class PipelineRunner(QThread):
         out_dir = OUTPUT_DIR / self.dataset.name
         out_dir.mkdir(parents=True, exist_ok=True)
 
+        # Persist images_dir so past-run loading can find images without guessing
+        (out_dir / "images_dir.txt").write_text(str(images_dir.resolve()))
+
         sfm_pairs    = out_dir / "pairs_sfm.txt"
         query_pairs  = out_dir / "pairs_query.txt"
         sfm_dir      = out_dir / "sparse"
@@ -100,6 +103,7 @@ class PipelineRunner(QThread):
 
         ret_conf_key   = RETRIEVAL_CONFS.get(ret_name)
         use_exhaustive = ret_conf_key is None or len(db_images) < 150
+        num_matched    = self.config.get("num_matched", 20)
 
         feature_conf  = extract_features.confs[ext_key]
         matcher_conf  = match_features.confs[mat_key]
@@ -127,7 +131,7 @@ class PipelineRunner(QThread):
                 export_dir=out_dir, image_list=db_images, overwrite=False,
             )
             pairs_from_retrieval.main(
-                retrieval_path, sfm_pairs, num_matched=20,
+                retrieval_path, sfm_pairs, num_matched=num_matched,
                 query_list=db_images, db_list=db_images,
             )
         self.progress_updated.emit(38)
@@ -154,6 +158,20 @@ class PipelineRunner(QThread):
                 f"{calibration['width']}×{calibration['height']}"
             )
 
+        if self.config.get("fast_reconstruction"):
+            sfm_extra["mapper_options"] = {
+                # Run global BA less often (every 50% more images instead of 10%)
+                "ba_global_images_ratio":       1.6,
+                "ba_global_points_ratio":       1.6,
+                # Fewer iterations per BA solve
+                "ba_global_max_num_iterations": 20,
+                "ba_local_max_num_iterations":  15,
+                # Fewer refinement iterations in local BA
+                "ba_global_max_refinements":    2,
+                "ba_local_max_refinements":     2,
+            }
+            self._log("Modo rápido: BA reducido (ba_global_images_ratio=1.6, max_iter=20/15)")
+
         sfm_model = None
         if not self.config.get("skip_reconstruction"):
             # Try loading an existing reconstruction before re-running COLMAP
@@ -178,6 +196,11 @@ class PipelineRunner(QThread):
                     image_list=db_images,
                     **sfm_extra,
                 )
+                if sfm_model is None:
+                    self._log("ERROR: COLMAP no pudo reconstruir ninguna imagen.")
+                    self._diagnose_sfm_failure(sfm_dir)
+                    self.finished.emit(False)
+                    return
                 self._log(f"Reconstrucción: {len(sfm_model.images)} imágenes, {len(sfm_model.points3D)} puntos 3D")
                 self.reconstruction_ready.emit(str(sfm_dir), str(images_dir))
         else:
@@ -205,7 +228,7 @@ class PipelineRunner(QThread):
                     export_dir=out_dir, image_list=query_images, overwrite=False,
                 )
                 pairs_from_retrieval.main(
-                    retrieval_path, query_pairs, num_matched=10,
+                    retrieval_path, query_pairs, num_matched=num_matched,
                     query_list=query_images, db_list=db_images,
                 )
             self.progress_updated.emit(84)
@@ -232,6 +255,16 @@ class PipelineRunner(QThread):
             )
             self.progress_updated.emit(96)
             self._report_metrics(results_path)
+
+        # Persist pipeline config so single-image localization can reuse it
+        import json
+        conf_record = {
+            "extractor":     ext_key,
+            "matcher":       mat_key,
+            "features_name": features_name,
+            "calibration":   calibration,
+        }
+        (out_dir / "pipeline_conf.json").write_text(json.dumps(conf_record, indent=2))
 
         self.progress_updated.emit(100)
         self._stage("Completado", 100)
@@ -344,6 +377,63 @@ class PipelineRunner(QThread):
             for name in query_images:
                 fh.write(f"{name} {model_name} {w} {h} {params_str}\n")
         return queries_txt
+
+    # ------------------------------------------------------------------
+    # SfM failure diagnostics
+    # ------------------------------------------------------------------
+
+    def _diagnose_sfm_failure(self, sfm_dir: Path) -> None:
+        """Query the COLMAP database left by a failed reconstruction and log stats."""
+        import sqlite3
+
+        db_path = sfm_dir / "database.db"
+        if not db_path.exists():
+            self._log("  (no se encontró database.db para diagnosticar)")
+            return
+
+        try:
+            con = sqlite3.connect(str(db_path))
+            cur = con.cursor()
+
+            n_images = cur.execute("SELECT COUNT(*) FROM images").fetchone()[0]
+
+            # Keypoints: average per image
+            kp_rows = cur.execute("SELECT rows FROM keypoints").fetchall()
+            kp_counts = [r[0] for r in kp_rows if r[0]]
+            avg_kp = sum(kp_counts) / len(kp_counts) if kp_counts else 0
+
+            # Raw matches
+            n_pairs_matched = cur.execute("SELECT COUNT(*) FROM matches WHERE rows > 0").fetchone()[0]
+            total_pairs     = cur.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
+
+            # Geometrically verified matches (inliers)
+            n_verified = cur.execute(
+                "SELECT COUNT(*) FROM two_view_geometries WHERE rows > 0"
+            ).fetchone()[0]
+            verified_rows = cur.execute(
+                "SELECT rows FROM two_view_geometries WHERE rows > 0"
+            ).fetchall()
+            avg_inliers = sum(r[0] for r in verified_rows) / len(verified_rows) if verified_rows else 0
+
+            con.close()
+
+            self._log(f"  Diagnóstico DB:")
+            self._log(f"    Imágenes importadas : {n_images}")
+            self._log(f"    Keypoints promedio  : {avg_kp:.0f} por imagen")
+            self._log(f"    Pares con matches   : {n_pairs_matched}/{total_pairs}")
+            self._log(f"    Pares verificados   : {n_verified}  (inliers promedio: {avg_inliers:.0f})")
+
+            if avg_inliers < 15:
+                self._log("  → Muy pocos inliers por par. Probá sin calibración fija o con exhaustive matching.")
+            elif n_verified < 10:
+                self._log("  → Pocos pares verificados. El retrieval no encontró pares con suficiente solapamiento.")
+                self._log("    Probá 'exhaustive' si el dataset es < 300 imágenes.")
+            else:
+                self._log("  → Matches parecen ok pero COLMAP no convergió.")
+                self._log("    Posible causa: movimiento demasiado brusco o poca textura en la escena.")
+
+        except Exception as e:
+            self._log(f"  Error al leer DB: {e}")
 
     # ------------------------------------------------------------------
     # Metrics

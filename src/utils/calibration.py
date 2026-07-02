@@ -81,5 +81,4 @@ def calibration_to_image_options(cal: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "camera_model":  cal["model"],
         "camera_params": params_str,
-        "single_camera": True,
     }

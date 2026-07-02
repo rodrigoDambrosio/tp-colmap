@@ -12,12 +12,13 @@ class CustomDataset(Dataset):
     Si la carpeta tiene subcarpetas 'db/' y 'query/', las usa directamente.
     """
 
-    def __init__(self, folder: Path):
-        self._folder = Path(folder)
+    def __init__(self, folder: Path, run_name: str = ""):
+        self._folder   = Path(folder)
+        self._run_name = run_name.strip()
 
     @property
     def name(self) -> str:
-        return f"custom_{self._folder.name}"
+        return self._run_name or f"custom_{self._folder.name}"
 
     def download(self, log_fn: Callable[[str], None] = print) -> None:
         if not self._folder.exists():
